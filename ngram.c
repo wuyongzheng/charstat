@@ -37,7 +37,7 @@ int main (int argc, char *argv[])
 		if (fgets(linebuf, sizeof(linebuf), stdin) == NULL)
 			break;
 		linelen = strlen(linebuf);
-		while (linebuf[linelen - 1] == '\r' || linebuf[linelen - 1] == '\n')
+		while (linelen > 0 && (linebuf[linelen - 1] == '\r' || linebuf[linelen - 1] == '\n'))
 			linelen --;
 		if (linelen < ngramn)
 			continue;
