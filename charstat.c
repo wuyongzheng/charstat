@@ -100,6 +100,7 @@ static void process_file_utf8 (FILE *fp)
 			break;
 		}
 		length += read_length;
+		buffer[length] = 0;
 
 		size_t i = 0;
 		while (i < length) {

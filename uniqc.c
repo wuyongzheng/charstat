@@ -198,7 +198,7 @@ static void usage (const char *cmd)
 	puts("  -d: sort in desending order (default: ascending order)");
 	puts("  -r: text followed by count (default: count followed by text)");
 	puts("  -u: do not print count (default: count followed by text)");
-	puts("  -w n: print count in fixed n digit. pad with 0");
+	puts("  -w n: print count in fixed n digit. prepend with 0");
 	puts("  -f c: use character c as the delimiter. (default: TAB)");
 }
 
