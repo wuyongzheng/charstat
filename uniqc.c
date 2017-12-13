@@ -5,7 +5,7 @@
 #include <assert.h>
 
 /* on 32 bit system, they are the same.
- * on 64 bit system, seems "int" run faster, at least when lines ash short
+ * on 64 bit system, seems "int32" run faster, at least when lines are short
  * I still keep "long" as an ugly compile time option. */
 typedef unsigned int hash_t; // more collision, more compact htable, faster hashing
 //typedef unsigned long hash_t; // less collision, larger htable, slower hashing
@@ -99,7 +99,7 @@ static int next_prime (int i)
 
 static void ht_add (const char *str)
 {
-	if (ht_used * 4 > ht_size * 3) {
+	if (ht_used * 2 > ht_size) {
 		/*{ // hashtable statistics
 			int i, j, maxj = 0;
 			long sqrsum = 0;
