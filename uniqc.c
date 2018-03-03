@@ -13,12 +13,13 @@ typedef unsigned int count_t;
 //typedef unsigned long count_t;
 
 struct ht_entry {
+	struct ht_entry *next;
 	hash_t hashval;
-	count_t count; // make sure they align correctly
-	char *str;
+	count_t count;
+	// the string immidiately follows this struct
 };
 
-static struct ht_entry *ht_table = NULL;
+static struct ht_entry **ht_table = NULL;
 static unsigned int ht_size;
 static unsigned int ht_used;
 
@@ -30,28 +31,40 @@ static int option_descending = 0;
 #define PRINTORDER_CT 0
 #define PRINTORDER_TC 1
 #define PRINTORDER_T  2
+#define PRINTORDER_L  3
 static int option_printorder = PRINTORDER_CT;
 static int option_width = 1;
 static char option_tab = '\t';
 
-static char *my_strdup (const char *s)
+#define ENTRY_STR(entry) ((char *)((entry)+1))
+
+/* We have a small trick to reduce malloc maintenance storage for
+ * short entries, because we don't need to worry about freeing. */
+static struct ht_entry *new_ht_entry (const char *s, struct ht_entry *next, hash_t hashval)
 {
-	const int POLLSIZE = 16384, MAXPOOLED = 16;
+	const int POLLSIZE = 64*1024, MAXPOOLED = 64;
+	const int ALIGN = sizeof(void *);
 	static char *pool = NULL;
 	static int polllen = 0;
 
-	int len = strlen(s) + 1;
-	if (len == 1)
-		return (char *)"";
-	if (len > MAXPOOLED)
-		return strdup(s);
-	if (pool == NULL || polllen + len > POLLSIZE) {
-		pool = malloc(POLLSIZE);
-		polllen = 0;
+	struct ht_entry *entry;
+	int len = sizeof(struct ht_entry) + strlen(s) + 1;
+	if (len > MAXPOOLED) {
+		entry = malloc(len);
+	} else {
+		if (pool == NULL || polllen + len > POLLSIZE) {
+			pool = malloc(POLLSIZE);
+			polllen = 0;
+		}
+		entry = (struct ht_entry *)(pool + polllen);
+		polllen += len;
+		polllen = ((polllen - 1) / ALIGN + 1) * ALIGN;
 	}
-	memcpy(pool + polllen, s, len);
-	polllen += len;
-	return pool + polllen - len;
+	strcpy(ENTRY_STR(entry), s); // It's safe. trust me.
+	entry->next = next;
+	entry->hashval = hashval;
+	entry->count = 1;
+	return entry;
 }
 
 static hash_t ht_calhash (const char *str)
@@ -68,7 +81,7 @@ static void ht_create (void)
 	assert(ht_table == NULL);
 	ht_size = 1031;
 	ht_used = 0;
-	ht_table = (struct ht_entry *)calloc(ht_size, sizeof(struct ht_entry));
+	ht_table = (struct ht_entry **)calloc(ht_size, sizeof(struct ht_entry*));
 }
 
 static int next_prime (int i)
@@ -99,31 +112,39 @@ static int next_prime (int i)
 
 static void ht_add (const char *str)
 {
-	if (ht_used * 2 > ht_size) {
+	if ((long)ht_used * 4 > (long)ht_size * 3) { // max 75% capacity
 		/*{ // hashtable statistics
 			int i, j, maxj = 0;
 			long sqrsum = 0;
-			for (i = j = 0; i < ht_size; i ++) {
-				if (ht_table[i].count != 0)
+			struct ht_entry *entry;
+			for (i = 0; i < ht_size; i ++) {
+				for (entry = ht_table[i], j = 0; entry != NULL; entry = entry->next) {
 					j ++;
-				else
-					j = 0;
-				if (maxj < j)
-					maxj = j;
-				sqrsum += j;
+					if (maxj < j)
+						maxj = j;
+					sqrsum += j;
+				}
 			}
-			printf("htstat: used=%d, size=%d, sqrsum=%ld, max=%d\n", ht_used, ht_size, sqrsum, maxj);
+			// avgcost: how many string comparisions needed for a lookup.
+			fprintf(stderr, "htstat: used=%d, size=%d, avgcost=%.2f, max=%d\n",
+					ht_used, ht_size, sqrsum * 1.0 / ht_used, maxj);
 		}*/
+		if (ht_size * 2 <= ht_size) {
+			fprintf(stderr, "Unique lines must be less than 2147483648\n");
+			abort();
+		}
 		unsigned int new_size = next_prime(ht_size * 2);
-		struct ht_entry *new_table = (struct ht_entry *)calloc(new_size, sizeof(struct ht_entry));
+		struct ht_entry **new_table = (struct ht_entry **)calloc(new_size, sizeof(struct ht_entry*));
 		unsigned int i;
 		for (i = 0; i < ht_size; i ++) {
-			if (ht_table[i].count == 0)
-				continue;
-			int j;
-			for (j = ht_table[i].hashval % new_size; new_table[j].count != 0; j = (j + 1) % new_size)
-				;
-			new_table[j] = ht_table[i];
+			struct ht_entry *entry = ht_table[i];
+			while (entry != NULL) {
+				struct ht_entry *next = entry->next; // save it because we'll change it.
+				int j = entry->hashval % new_size;
+				entry->next = new_table[j];
+				new_table[j] = entry;
+				entry = next;
+			}
 		}
 		free(ht_table);
 		ht_table = new_table;
@@ -131,22 +152,20 @@ static void ht_add (const char *str)
 	}
 
 	hash_t hashval = ht_calhash(str);
-	unsigned int i;
-	for (i = hashval % ht_size;
-			ht_table[i].count != 0 &&
-				(ht_table[i].hashval != hashval ||
-					strcmp(ht_table[i].str, str) != 0);
-			i = (i + 1) % ht_size)
-		;
-
-	if (ht_table[i].count == 0) {
-		ht_table[i].hashval = hashval;
-		ht_table[i].str = my_strdup(str);
-		ht_table[i].count = 1;
-		ht_used ++;
-	} else {
-		ht_table[i].count ++;
+	struct ht_entry *entry;
+	for (entry = ht_table[hashval % ht_size]; entry != NULL; entry = entry->next) {
+		if (entry->hashval == hashval && strcmp(ENTRY_STR(entry), str) == 0) {
+			if (entry->count + 1 <= entry->count) {
+				fprintf(stderr, "A line can repeat at most %u times\n", entry->count);
+				abort();
+			}
+			entry->count ++;
+			return;
+		}
 	}
+	entry = new_ht_entry(str, ht_table[hashval % ht_size], hashval);
+	ht_table[hashval % ht_size] = entry;
+	ht_used ++;
 }
 
 static void process_file (FILE *fp)
@@ -162,12 +181,16 @@ static void process_file (FILE *fp)
 
 static int compare_text (const void *entry1, const void *entry2)
 {
-	return strcmp((*(struct ht_entry **)entry1)->str, (*(struct ht_entry **)entry2)->str);
+	struct ht_entry *e1 = *(struct ht_entry **)entry1;
+	struct ht_entry *e2 = *(struct ht_entry **)entry2;
+	return strcmp(ENTRY_STR(e1), ENTRY_STR(e2));
 }
 
 static int compare_count (const void *entry1, const void *entry2)
 {
-	return (*(struct ht_entry **)entry1)->count - (*(struct ht_entry **)entry2)->count;
+	struct ht_entry *e1 = *(struct ht_entry **)entry1;
+	struct ht_entry *e2 = *(struct ht_entry **)entry2;
+	return e1->count - e2->count;
 }
 
 static void print_entry (const char *str, count_t count)
@@ -194,10 +217,12 @@ static void usage (const char *cmd)
 {
 	printf("Usage: %s [opts] [files ...] \n", cmd);
 	puts("  -c: sort by count (default: no sort)");
+	puts("  -C: sort by count in desending order");
 	puts("  -t: sort by text (default: no sort)");
-	puts("  -d: sort in desending order (default: ascending order)");
+	puts("  -T: sort by text in desending order");
 	puts("  -r: text followed by count (default: count followed by text)");
-	puts("  -u: do not print count (default: count followed by text)");
+	puts("  -u: do not print count");
+	puts("  -l: print number of unique lines");
 	puts("  -w n: print count in fixed n digit. prepend with 0");
 	puts("  -f c: use character c as the delimiter. (default: TAB)");
 }
@@ -206,13 +231,15 @@ int main (int argc, char *argv[])
 {
 	int opt;
 
-	while ((opt = getopt(argc, argv, "ctdruw:f:")) != -1) {
+	while ((opt = getopt(argc, argv, "cCtTrulw:f:")) != -1) {
 		switch (opt) {
 		case 'c': option_sortby = SORT_COUNT; break;
-		case 't': option_sortby = SORT_TEXT; break;
-		case 'd': option_descending = 1; break;
+		case 'C': option_sortby = SORT_COUNT; option_descending = 1; break;
+		case 't': option_sortby = SORT_TEXT; option_descending = 1; break;
+		case 'T': option_sortby = SORT_TEXT; break;
 		case 'r': option_printorder = PRINTORDER_TC; break;
 		case 'u': option_printorder = PRINTORDER_T; break;
+		case 'l': option_printorder = PRINTORDER_L; break;
 		case 'w':
 			option_width = atoi(optarg);
 			if (option_width < 0)
@@ -240,29 +267,38 @@ int main (int argc, char *argv[])
 		}
 	}
 
+	if (option_printorder == PRINTORDER_L) {
+		printf("%d\n", ht_used);
+		return 0;
+	}
+
 	if (ht_used == 0)
 		return 0;
 
 	if (option_sortby == SORT_NONE) {
 		int i;
 		for (i = 0; i < ht_size; i ++) {
-			if (ht_table[i].count)
-				print_entry(ht_table[i].str, ht_table[i].count);
+			struct ht_entry *entry;
+			for (entry = ht_table[i]; entry != NULL; entry = entry->next)
+				print_entry(ENTRY_STR(entry), entry->count);
 		}
 	} else {
 		struct ht_entry **sorted = (struct ht_entry **)malloc(ht_used * sizeof(struct ht_entry *));
 		int i, j;
-		for (i = j = 0; i < ht_size && j < ht_used; i ++)
-			if (ht_table[i].count != 0)
-				sorted[j ++] = &ht_table[i];
+		for (i = j = 0; i < ht_size; i ++) {
+			struct ht_entry *entry;
+			for (entry = ht_table[i]; entry != NULL; entry = entry->next)
+				sorted[j ++] = entry;
+		}
+		assert(j == ht_used);
 
 		qsort(sorted, ht_used, sizeof(struct ht_entry *), option_sortby == SORT_TEXT ? compare_text : compare_count);
 		if (option_descending) {
 			for (i = ht_used - 1; i >= 0; i --)
-				print_entry(sorted[i]->str, sorted[i]->count);
+				print_entry(ENTRY_STR(sorted[i]), sorted[i]->count);
 		} else {
 			for (i = 0; i < ht_used; i ++)
-				print_entry(sorted[i]->str, sorted[i]->count);
+				print_entry(ENTRY_STR(sorted[i]), sorted[i]->count);
 		}
 	}
 
