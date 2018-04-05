@@ -235,8 +235,8 @@ int main (int argc, char *argv[])
 		switch (opt) {
 		case 'c': option_sortby = SORT_COUNT; break;
 		case 'C': option_sortby = SORT_COUNT; option_descending = 1; break;
-		case 't': option_sortby = SORT_TEXT; option_descending = 1; break;
-		case 'T': option_sortby = SORT_TEXT; break;
+		case 't': option_sortby = SORT_TEXT; break;
+		case 'T': option_sortby = SORT_TEXT; option_descending = 1; break;
 		case 'r': option_printorder = PRINTORDER_TC; break;
 		case 'u': option_printorder = PRINTORDER_T; break;
 		case 'l': option_printorder = PRINTORDER_L; break;
